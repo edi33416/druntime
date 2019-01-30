@@ -5,9 +5,10 @@
  * License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Authors:   Martin Nowak
  */
-module rt.aaA;
 
-/// AA version for debuggers, bump whenever changing the layout
+module assoc_array;
+
+/// AssocArray!(void, void)* version for debuggers, bump whenever changing the layout
 extern (C) immutable int _aaVersion = 1;
 
 import core.memory : GC;
@@ -20,7 +21,7 @@ private enum SHRINK_NUM = 1;
 private enum SHRINK_DEN = 8;
 // grow factor
 private enum GROW_FAC = 4;
-// growing the AA doubles it's size, so the shrink threshold must be
+// growing the AssocArray!(void, void)* doubles it's size, so the shrink threshold must be
 // smaller than half the grow threshold to have a hysteresis
 static assert(GROW_FAC * SHRINK_NUM * GROW_DEN < GROW_NUM * SHRINK_DEN);
 // initial load factor (for literals), mean of both thresholds
@@ -33,21 +34,40 @@ private enum HASH_EMPTY = 0;
 private enum HASH_DELETED = 0x1;
 private enum HASH_FILLED_MARK = size_t(1) << 8 * size_t.sizeof - 1;
 
-/// Opaque AA wrapper
-struct AA
-{
-    Impl* impl;
-    alias impl this;
-}
-
-private @property bool empty(in Impl* aa) pure nothrow @nogc
+private @property bool empty(in AssocArray!(void, void)* aa) pure nothrow @nogc
 {
     return aa is null || !aa.length;
 }
 
-private struct Impl
+
+bool hasPostblit(in TypeInfo ti)
 {
-private:
+    return (&ti.postblit).funcptr !is &TypeInfo.postblit;
+}
+
+inout(TypeInfo) unqualify(inout(TypeInfo) cti) pure nothrow @nogc
+{
+    TypeInfo ti = cast() cti;
+    while (ti)
+    {
+        // avoid dynamic type casts
+        auto tti = typeid(ti);
+        if (tti is typeid(TypeInfo_Const))
+            ti = (cast(TypeInfo_Const)cast(void*)ti).base;
+        else if (tti is typeid(TypeInfo_Invariant))
+            ti = (cast(TypeInfo_Invariant)cast(void*)ti).base;
+        else if (tti is typeid(TypeInfo_Shared))
+            ti = (cast(TypeInfo_Shared)cast(void*)ti).base;
+        else if (tti is typeid(TypeInfo_Inout))
+            ti = (cast(TypeInfo_Inout)cast(void*)ti).base;
+        else
+            break;
+    }
+    return ti;
+}
+
+struct AssocArray(K, V)
+{
     this(in TypeInfo_AssociativeArray ti, size_t sz = INIT_NUM_BUCKETS)
     {
         keysz = cast(uint) ti.key.tsize;
@@ -57,7 +77,6 @@ private:
         entryTI = fakeEntryTI(ti.key, ti.value);
         valoff = cast(uint) talign(keysz, ti.value.talign);
 
-        import rt.lifetime : hasPostblit, unqualify;
 
         if (hasPostblit(unqualify(ti.key)))
             flags |= Flags.keyHasPostblit;
@@ -161,46 +180,48 @@ private:
         deleted = used = 0;
         firstUsed = cast(uint) dim;
     }
-}
 
-//==============================================================================
-// Bucket
-//------------------------------------------------------------------------------
-
-private struct Bucket
-{
-private pure nothrow @nogc:
-    size_t hash;
-    void* entry;
-
-    @property bool empty() const
+    static struct Entry
     {
-        return hash == HASH_EMPTY;
+
     }
 
-    @property bool deleted() const
+    private struct Bucket
     {
-        return hash == HASH_DELETED;
+    private pure nothrow @nogc:
+        size_t hash;
+        void* entry;
+
+        @property bool empty() const
+        {
+            return hash == HASH_EMPTY;
+        }
+
+        @property bool deleted() const
+        {
+            return hash == HASH_DELETED;
+        }
+
+        @property bool filled() const @safe
+        {
+            return cast(ptrdiff_t) hash < 0;
+        }
     }
 
-    @property bool filled() const @safe
+    Bucket[] allocBuckets(size_t dim) @trusted pure nothrow
     {
-        return cast(ptrdiff_t) hash < 0;
+        enum attr = GC.BlkAttr.NO_INTERIOR;
+        immutable sz = dim * Bucket.sizeof;
+        return (cast(Bucket*) GC.calloc(sz, attr))[0 .. dim];
     }
 }
 
-Bucket[] allocBuckets(size_t dim) @trusted pure nothrow
-{
-    enum attr = GC.BlkAttr.NO_INTERIOR;
-    immutable sz = dim * Bucket.sizeof;
-    return (cast(Bucket*) GC.calloc(sz, attr))[0 .. dim];
-}
 
 //==============================================================================
 // Entry
 //------------------------------------------------------------------------------
 
-private void* allocEntry(in Impl* aa, in void* pkey)
+private void* allocEntry(in AssocArray!(void, void)* aa, in void* pkey)
 {
     import rt.lifetime : _d_newitemU;
     import core.stdc.string : memcpy, memset;
@@ -211,7 +232,7 @@ private void* allocEntry(in Impl* aa, in void* pkey)
         res = _d_newitemU(aa.entryTI);
     else
     {
-        auto flags = (aa.flags & Impl.Flags.hasPointers) ? 0 : GC.BlkAttr.NO_SCAN;
+        auto flags = (aa.flags & AssocArray!(void, void).Flags.hasPointers) ? 0 : GC.BlkAttr.NO_SCAN;
         res = GC.malloc(akeysz + aa.valsz, flags);
     }
 
@@ -343,17 +364,15 @@ private T max(T)(T a, T b) pure nothrow @nogc
 }
 
 //==============================================================================
-// API Implementation
+// API AssocArrayementation
 //------------------------------------------------------------------------------
 
 /// Determine number of entries in associative array.
 
-extern (C) size_t _aaLen(in AA aa) pure nothrow @nogc
+extern (C) size_t _aaLen(in AssocArray!(void, void)* aa) pure nothrow @nogc
 {
     return aa ? aa.length : 0;
 }
-
-
 
 /******************************
  * Lookup *pkey in aa.
@@ -368,44 +387,44 @@ extern (C) size_t _aaLen(in AA aa) pure nothrow @nogc
  *      If key was not in the aa, a mutable pointer to newly inserted value which
  *      is set to all zeros
  */
-extern (C) void* _aaGetY(AA* aa, const TypeInfo_AssociativeArray ti, in size_t valsz,
+extern (C) void* _aaGetY(AssocArray!(void, void)** aa, const TypeInfo_AssociativeArray ti, in size_t valsz,
     in void* pkey)
 {
     // lazily alloc implementation
-    if (aa.impl is null)
-        aa.impl = new Impl(ti);
+    if (*aa is null)
+        *aa = new AssocArray!(void, void)(ti);
 
     // get hash and bucket for key
     immutable hash = calcHash(pkey, ti.key);
 
     // found a value => return it
-    if (auto p = aa.findSlotLookup(hash, pkey, ti.key))
-        return p.entry + aa.valoff;
+    if (auto p = (*aa).findSlotLookup(hash, pkey, ti.key))
+        return p.entry + (*aa).valoff;
 
-    auto p = aa.findSlotInsert(hash);
+    auto p = (*aa).findSlotInsert(hash);
     if (p.deleted)
-        --aa.deleted;
+        --((*aa).deleted);
     // check load factor and possibly grow
-    else if (++aa.used * GROW_DEN > aa.dim * GROW_NUM)
+    else if (++((*aa).used) * GROW_DEN > (*aa).dim * GROW_NUM)
     {
-        aa.grow(ti.key);
-        p = aa.findSlotInsert(hash);
+        (*aa).grow(ti.key);
+        p = (*aa).findSlotInsert(hash);
         assert(p.empty);
     }
 
     // update search cache and allocate entry
-    aa.firstUsed = min(aa.firstUsed, cast(uint)(p - aa.buckets.ptr));
+    (*aa).firstUsed = min((*aa).firstUsed, cast(uint)(p - (*aa).buckets.ptr));
     p.hash = hash;
-    p.entry = allocEntry(aa.impl, pkey);
+    p.entry = allocEntry((*aa), pkey);
     // postblit for key
-    if (aa.flags & Impl.Flags.keyHasPostblit)
+    if ((*aa).flags & AssocArray!(void, void).Flags.keyHasPostblit)
     {
         import rt.lifetime : __doPostblit, unqualify;
 
-        __doPostblit(p.entry, aa.keysz, unqualify(ti.key));
+        __doPostblit(p.entry, (*aa).keysz, unqualify(ti.key));
     }
     // return pointer to value
-    return p.entry + aa.valoff;
+    return p.entry + (*aa).valoff;
 }
 
 /******************************
@@ -419,7 +438,7 @@ extern (C) void* _aaGetY(AA* aa, const TypeInfo_AssociativeArray ti, in size_t v
  * Returns:
  *      pointer to value if present, null otherwise
  */
-extern (C) inout(void)* _aaGetRvalueX(inout AA aa, in TypeInfo keyti, in size_t valsz,
+extern (C) inout(void)* _aaGetRvalueX(inout AssocArray!(void, void)* aa, in TypeInfo keyti, in size_t valsz,
     in void* pkey)
 {
     return _aaInX(aa, keyti, pkey);
@@ -435,7 +454,7 @@ extern (C) inout(void)* _aaGetRvalueX(inout AA aa, in TypeInfo keyti, in size_t 
  * Returns:
  *      pointer to value if present, null otherwise
  */
-extern (C) inout(void)* _aaInX(inout AA aa, in TypeInfo keyti, in void* pkey)
+extern (C) inout(void)* _aaInX(inout AssocArray!(void, void)* aa, in TypeInfo keyti, in void* pkey)
 {
     if (aa.empty)
         return null;
@@ -446,8 +465,8 @@ extern (C) inout(void)* _aaInX(inout AA aa, in TypeInfo keyti, in void* pkey)
     return null;
 }
 
-/// Delete entry in AA, return true if it was present
-extern (C) bool _aaDelX(AA aa, in TypeInfo keyti, in void* pkey)
+/// Delete entry in AssocArray!(void, void)*, return true if it was present
+extern (C) bool _aaDelX(AssocArray!(void, void)* aa, in TypeInfo keyti, in void* pkey)
 {
     if (aa.empty)
         return false;
@@ -468,25 +487,25 @@ extern (C) bool _aaDelX(AA aa, in TypeInfo keyti, in void* pkey)
     return false;
 }
 
-/// Remove all elements from AA.
-extern (C) void _aaClear(AA aa) pure nothrow
+/// Remove all elements from AssocArray!(void, void)*.
+extern (C) void _aaClear(AssocArray!(void, void)* aa) pure nothrow
 {
     if (!aa.empty)
     {
-        aa.impl.clear();
+        aa.clear();
     }
 }
 
-/// Rehash AA
-extern (C) void* _aaRehash(AA* paa, in TypeInfo keyti) pure nothrow
+/// Rehash AssocArray!(void, void)*
+extern (C) void* _aaRehash(AssocArray!(void, void)** paa, in TypeInfo keyti) pure nothrow
 {
     if (!(*paa).empty)
-        paa.resize(nextpow2(INIT_DEN * paa.length / INIT_NUM));
+        (*paa).resize(nextpow2(INIT_DEN * (*paa).length / INIT_NUM));
     return *paa;
 }
 
 /// Return a GC allocated array of all values
-extern (C) inout(void[]) _aaValues(inout AA aa, in size_t keysz, in size_t valsz,
+extern (C) inout(void[]) _aaValues(inout AssocArray!(void, void)* aa, in size_t keysz, in size_t valsz,
     const TypeInfo tiValueArray) pure nothrow
 {
     if (aa.empty)
@@ -510,7 +529,7 @@ extern (C) inout(void[]) _aaValues(inout AA aa, in size_t keysz, in size_t valsz
 }
 
 /// Return a GC allocated array of all keys
-extern (C) inout(void[]) _aaKeys(inout AA aa, in size_t keysz, const TypeInfo tiKeyArray) pure nothrow
+extern (C) inout(void[]) _aaKeys(inout AssocArray!(void, void)* aa, in size_t keysz, const TypeInfo tiKeyArray) pure nothrow
 {
     if (aa.empty)
         return null;
@@ -536,7 +555,7 @@ extern (D) alias dg_t = int delegate(void*);
 extern (D) alias dg2_t = int delegate(void*, void*);
 
 /// foreach opApply over all values
-extern (C) int _aaApply(AA aa, in size_t keysz, dg_t dg)
+extern (C) int _aaApply(AssocArray!(void, void)* aa, in size_t keysz, dg_t dg)
 {
     if (aa.empty)
         return 0;
@@ -553,7 +572,7 @@ extern (C) int _aaApply(AA aa, in size_t keysz, dg_t dg)
 }
 
 /// foreach opApply over all key/value pairs
-extern (C) int _aaApply2(AA aa, in size_t keysz, dg2_t dg)
+extern (C) int _aaApply2(AssocArray!(void, void)* aa, in size_t keysz, dg2_t dg)
 {
     if (aa.empty)
         return 0;
@@ -570,7 +589,7 @@ extern (C) int _aaApply2(AA aa, in size_t keysz, dg2_t dg)
 }
 
 /// Construct an associative array of type ti from keys and value
-extern (C) Impl* _d_assocarrayliteralTX(const TypeInfo_AssociativeArray ti, void[] keys,
+extern (C) AssocArray!(void, void)* _d_assocarrayliteralTX(const TypeInfo_AssociativeArray ti, void[] keys,
     void[] vals)
 {
     assert(keys.length == vals.length);
@@ -582,7 +601,7 @@ extern (C) Impl* _d_assocarrayliteralTX(const TypeInfo_AssociativeArray ti, void
     if (!length)
         return null;
 
-    auto aa = new Impl(ti, nextpow2(INIT_DEN * length / INIT_NUM));
+    auto aa = new AssocArray!(void, void)(ti, nextpow2(INIT_DEN * length / INIT_NUM));
 
     void* pkey = keys.ptr;
     void* pval = vals.ptr;
@@ -615,10 +634,10 @@ extern (C) Impl* _d_assocarrayliteralTX(const TypeInfo_AssociativeArray ti, void
     return aa;
 }
 
-/// compares 2 AAs for equality
-extern (C) int _aaEqual(in TypeInfo tiRaw, in AA aa1, in AA aa2)
+/// compares 2 AssocArray!(void, void)*s for equality
+extern (C) int _aaEqual(in TypeInfo tiRaw, in AssocArray!(void, void)* aa1, in AssocArray!(void, void)* aa2)
 {
-    if (aa1.impl is aa2.impl)
+    if (aa1 is aa2)
         return true;
 
     immutable len = _aaLen(aa1);
@@ -645,10 +664,8 @@ extern (C) int _aaEqual(in TypeInfo tiRaw, in AA aa1, in AA aa2)
     return true;
 }
 
-
-
 /// compute a hash
-extern (C) hash_t _aaGetHash(in AA* aa, in TypeInfo tiRaw) nothrow
+extern (C) hash_t _aaGetHash(in AssocArray!(void, void)** aa, in TypeInfo tiRaw) nothrow
 {
     if ((*aa).empty)
         return 0;
@@ -657,11 +674,11 @@ extern (C) hash_t _aaGetHash(in AA* aa, in TypeInfo tiRaw) nothrow
 
     auto uti = unqualify(tiRaw);
     auto ti = *cast(TypeInfo_AssociativeArray*)&uti;
-    immutable off = aa.valoff;
+    immutable off = (*aa).valoff;
     auto valHash = &ti.value.getHash;
 
     size_t h;
-    foreach (b; aa.buckets)
+    foreach (b; (*aa).buckets)
     {
         if (!b.filled)
             continue;
@@ -677,14 +694,14 @@ extern (C) hash_t _aaGetHash(in AA* aa, in TypeInfo tiRaw) nothrow
  */
 struct Range
 {
-    Impl* impl;
+    AssocArray!(void, void)* impl;
     size_t idx;
     alias impl this;
 }
 
 extern (C) pure nothrow @nogc @safe
 {
-    Range _aaRange(AA aa)
+    Range _aaRange(AssocArray!(void, void)* aa)
     {
         if (!aa)
             return Range();
@@ -692,14 +709,14 @@ extern (C) pure nothrow @nogc @safe
         foreach (i; aa.firstUsed .. aa.dim)
         {
             if (aa.buckets[i].filled)
-                return Range(aa.impl, i);
+                return Range(aa, i);
         }
         return Range(aa, aa.dim);
     }
 
     bool _aaRangeEmpty(Range r)
     {
-        return r.impl is null || r.idx == r.dim;
+        return r is null || r.idx == r.dim;
     }
 
     void* _aaRangeFrontKey(Range r)
@@ -797,13 +814,13 @@ pure nothrow unittest
     string[int] key2 = [1 : "false", 2 : "true"];
     string[int] key3;
 
-    // AA lits create a larger hashtable
+    // AssocArray!(void, void)* lits create a larger hashtable
     int[string[int]] aa1 = [key1 : 100, key2 : 200, key3 : 300];
 
     // Ensure consistent hash values are computed for key1
     assert((key1 in aa1) !is null);
 
-    // Manually assigning to an empty AA creates a smaller hashtable
+    // Manually assigning to an empty AssocArray!(void, void)* creates a smaller hashtable
     int[string[int]] aa2;
     aa2[key1] = 100;
     aa2[key2] = 200;
@@ -835,9 +852,9 @@ pure nothrow unittest
 
     int[string] c;
     c["a"] = 1;
-    assert(a != c); // comparison with empty non-null AA
+    assert(a != c); // comparison with empty non-null AssocArray!(void, void)*
     assert(c != a);
-    assert(b != c); // comparison with null AA
+    assert(b != c); // comparison with null AssocArray!(void, void)*
     assert(c != b);
 }
 
@@ -947,7 +964,7 @@ unittest
         assert(i in aa);
 }
 
-// test postblit for AA literals
+// test postblit for AssocArray!(void, void)* literals
 unittest
 {
     static struct T
@@ -1016,7 +1033,7 @@ pure nothrow unittest
     assert(aa[5] == 6);
 }
 
-// test AA as key (Issue 16974)
+// test AssocArray!(void, void)* as key (Issue 16974)
 unittest
 {
     int[int] a = [1 : 2], a2 = [1 : 2];
