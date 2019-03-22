@@ -949,10 +949,12 @@ private
 
 public @trusted @nogc nothrow pure extern (C) void _d_delThrowable(scope Throwable);
 
+class ProtoObject {}
+
 /**
  * All D class objects inherit from Object.
  */
-class Object
+class Object : ProtoObject
 {
     /**
      * Convert Object to a human readable string.
