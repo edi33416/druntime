@@ -949,7 +949,8 @@ private
 
 public @trusted @nogc nothrow pure extern (C) void _d_delThrowable(scope Throwable);
 
-class ProtoObject {}
+// This is ProtoObjectWithMonitor
+class ProtoObject { }
 
 /**
  * All D class objects inherit from Object.
