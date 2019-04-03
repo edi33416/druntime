@@ -952,6 +952,247 @@ public @trusted @nogc nothrow pure extern (C) void _d_delThrowable(scope Throwab
 // This is ProtoObjectWithMonitor
 class ProtoObject { }
 
+@system unittest
+{
+    class Widget : ProtoObject {}
+    class A {}
+    class B : A {}
+    class C {}
+
+    Widget w = new Widget();
+    assert(w);
+    //TextWidget t = cast(TextWidget) w;
+    //assert(!t);
+    Object o = cast(Object) w;
+    assert(!o);
+    //o = cast(Object) w;
+    //assert(!o);
+
+    auto a = new B();
+    assert(a);
+    auto c = cast(C) a;
+    assert (!c);
+    auto o2 = cast(Object) a;
+    assert (o2);
+    auto p = cast(ProtoObject) o2;
+    assert(p);
+    assert(cast(Object)p);
+    assert(!cast(Object)w);
+}
+
+interface Ordered(T)
+if (is(T == ProtoObject))
+{
+    const @nogc nothrow pure @safe scope
+    int cmp(scope const Ordered!ProtoObject rhs);
+}
+
+interface Ordered(T) : Ordered!ProtoObject
+if (!is(T == ProtoObject))
+{
+    static assert(is(T : ProtoObject));
+
+    const @nogc nothrow pure @safe scope
+    int cmp(scope const T rhs);
+}
+
+// From std.traits
+// alternative? check if __traits(getFunctionAttributes, X) compiles
+template isFunction(X...)
+if (X.length == 1)
+{
+    static if (is(typeof(&X[0]) U : U*) && is(U == function) ||
+               is(typeof(&X[0]) U == delegate))
+    {
+        // x is a (nested) function symbol.
+        enum isFunction = true;
+    }
+    else static if (is(X[0] T))
+    {
+        // x is a type. Take the type of it and examine.
+        enum isFunction = is(T == function);
+    }
+    else
+        enum isFunction = false;
+}
+
+mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
+{
+    // Introduce base class overload set
+    static if (is(T P == super) && !is(P[0] == ProtoObject))
+    {
+        //TODO: would be nice to be able to
+        //alias cmp = P[0].cmp;
+
+        override
+        const @nogc nothrow pure @safe scope
+        int cmp(scope const P[0] rhs)
+        {
+            return super.cmp(rhs);
+        }
+    }
+
+    override
+    const @nogc nothrow pure @safe scope
+    int cmp(scope const Ordered!ProtoObject rhs)
+    {
+        auto o = (() @trusted => cast(T) rhs)();
+        int r = cmp(o);
+        if (r == 0)
+            return rhs.cmp(this);
+        return r;
+    }
+
+    override
+    const @nogc nothrow pure @safe scope
+    int cmp(scope const T rhs)
+    {
+        int compare(U1, U2)(U1 u1, U2 u2)
+        {
+            static if (__traits(compiles, __cmp(u1, u2)))
+            {
+                auto r = __cmp(u1, u2);
+                if (r != 0)
+                    return r;
+            }
+            else static if (__traits(compiles, u1.opCmp(u2)))
+            {
+                auto r = u1.opCmp(u2);
+                if (r != 0)
+                    return r;
+            }
+            else static if (__traits(compiles, u1 < u2))
+            {
+                if (u1 != u2)
+                    return u1 < u2 ? -1 : 1;
+            }
+            else
+            {
+                // TODO: fix this legacy bad behavior, see
+                // https://issues.dlang.org/show_bug.cgi?id=17244
+                static assert(is(U1 == U2), "Internal error.");
+                import core.stdc.string : memcmp;
+                auto r = (() @trusted => memcmp(&u1, &u2, U1.sizeof))();
+                if (r != 0)
+                    return r;
+            }
+            return 0;
+        }
+
+        if (rhs is null) return 1;
+
+        static if (M.length == 0)
+        {
+            alias U = __traits(allMembers, T);
+        }
+        else
+        {
+            alias U = M;
+        }
+        static assert(!hasCustomCompare || (hasCustomCompare && (U.length % 2 == 0)));
+        enum len = hasCustomCompare ? (U.length / 2) : U.length;
+
+        int r = 0;
+        static foreach (i; 0 .. len)
+        {{
+            static if (hasCustomCompare)
+            {
+                enum memberIdx = 2 * i;
+                alias compareFun = U[2 * i + 1];
+            }
+            else
+            {
+                enum memberIdx = i;
+                alias compareFun = compare;
+            }
+
+            static if (__traits(compiles, __traits(getMember, this, U[memberIdx])) && // avoid no property `this` for type proto_obj_t.__unittest_L134_C1.Widget
+                   !isFunction!(__traits(getMember, this, U[memberIdx])))
+            {
+                alias thisMember = __traits(getMember, this, U[memberIdx]);
+                alias rhsMember = __traits(getMember, rhs, U[memberIdx]);
+
+                // If we can't call the function with the args, throw the compiler error
+                static assert(is(typeof({compareFun(thisMember, rhsMember);})),
+                        typeof({compareFun(thisMember, rhsMember);}));
+
+                r = compareFun(__traits(getMember, this, U[memberIdx]), __traits(getMember, rhs, U[memberIdx]));
+                if (r != 0)
+                {
+                    return r;
+                }
+            }
+            //else
+            //{
+                //static assert(isFunction!(__traits(getMember, this, U[memberIdx])), "No member " ~ (U[memberIdx]).stringof ~ " for type " ~ typeof(this).stringof);
+            //}
+        }}
+        return r;
+    }
+}
+
+@safe unittest
+{
+    class Widget : ProtoObject, Ordered!Widget
+    {
+        mixin ImplOrdered!Widget;
+        int x;
+        int y;
+
+        this(int x, int y)
+        {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    class TextWidget : Widget, Ordered!TextWidget
+    {
+        mixin ImplOrdered!TextWidget;
+        this(int x, int y) { super(x, y); }
+    }
+
+    class TextWidgetEnh : TextWidget, Ordered!TextWidgetEnh
+    {
+        mixin ImplOrdered!TextWidgetEnh;
+        this(int x, int y) { super(x, y); }
+    }
+
+    auto w1 = new Widget(10, 20);
+    auto w2 = new TextWidget(10, 21);
+    assert(w1.cmp(w2) != w2.cmp(w1));
+    Widget w3;
+    assert(w1.cmp(w3) != 0);
+    assert(w3 is null);
+}
+
+@safe unittest
+{
+    class Widget : ProtoObject, Ordered!Widget
+    {
+        mixin ImplOrdered!(Widget, false, "x");
+        int x;
+        int y;
+
+        this(int x, int y)
+        {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    class TextWidget : Widget, Ordered!TextWidget
+    {
+        mixin ImplOrdered!(TextWidget, false, "x");
+        this(int x, int y) { super(x, y); }
+    }
+
+    auto w1 = new Widget(10, 20);
+    auto w2 = new TextWidget(10, 21);
+    assert(w1.cmp(w2) == 0);
+    assert(w1.cmp(w2) == w2.cmp(w1));
+}
+
 /**
  * All D class objects inherit from Object.
  */
