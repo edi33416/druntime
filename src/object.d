@@ -1193,6 +1193,33 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
     assert(w1.cmp(w2) == w2.cmp(w1));
 }
 
+@safe unittest
+{
+    class Widget : ProtoObject, Ordered!Widget
+    {
+        mixin ImplOrdered!(Widget, true, "x", (int a, int b) => a - b);
+        int x;
+        int y;
+
+        this(int x, int y)
+        {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    class TextWidget : Widget, Ordered!TextWidget
+    {
+        mixin ImplOrdered!(TextWidget, true, "x", (int a, int b) => a - b);
+        this(int x, int y) { super(x, y); }
+    }
+
+    auto w1 = new Widget(10, 20);
+    auto w2 = new TextWidget(10, 21);
+    assert(w1.cmp(w2) == 0);
+    assert(w1.cmp(w2) == w2.cmp(w1));
+}
+
 /**
  * All D class objects inherit from Object.
  */
