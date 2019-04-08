@@ -1075,7 +1075,8 @@ if (is(T : ProtoObject))
             }
 
             static if (__traits(compiles, __traits(getMember, this, U[memberIdx])) && // avoid no property `this` for type proto_obj_t.__unittest_L134_C1.Widget
-                   !isFunction!(__traits(getMember, this, U[memberIdx])))
+                   !isFunction!(__traits(getMember, this, U[memberIdx])) &&
+                   is(typeof(__traits(getMember, this, U[memberIdx]))))
             {
                 alias thisMember = __traits(getMember, this, U[memberIdx]);
                 alias rhsMember = __traits(getMember, rhs, U[memberIdx]);
@@ -1188,6 +1189,62 @@ if (is(T : ProtoObject))
     auto w2 = new TextWidget(10, 21);
     assert(w1.cmp(w2) == 0);
     assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
+}
+
+mixin template ImplOrderedExcept(T, M...)
+if (is(T : ProtoObject))
+{
+    template FilteredRes(T, M...)
+    {
+        import core.internal.traits;
+        static bool ExceptPred(string except)()
+        {
+            bool r = true;
+            static foreach (mem; M)
+            {
+                static if (mem == except)
+                {
+                    r = false;
+                    goto break_label;
+                }
+            }
+break_label:
+            return r;
+        }
+        enum FilteredRes = Filter!(ExceptPred, __traits(allMembers, T));
+    }
+    mixin ImplOrdered!(T, false, FilteredRes!(T, M));
+}
+
+@safe unittest
+{
+    class Book : ProtoObject, Ordered
+    {
+        enum BookFormat
+        {
+            pdf,
+            epub,
+            paperback,
+            hardcover
+        }
+
+        int isbn;
+        BookFormat format;
+
+        this (int isbn, BookFormat format)
+        {
+            this.isbn = isbn;
+            this.format = format;
+        }
+
+        mixin ImplOrderedExcept!(Book, "format");
+    }
+
+    auto b1 = new Book(12345, Book.BookFormat.pdf);
+    auto b2 = new Book(12345, Book.BookFormat.paperback);
+
+    assert(b1.cmp(b2) == 0);
+    assert(b1.format != b2.format);
 }
 
 /**
