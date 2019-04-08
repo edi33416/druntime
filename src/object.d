@@ -955,18 +955,17 @@ class ProtoObject { }
 @system unittest
 {
     class Widget : ProtoObject {}
+    class TextWidget : Widget {}
     class A {}
     class B : A {}
     class C {}
 
     Widget w = new Widget();
     assert(w);
-    //TextWidget t = cast(TextWidget) w;
-    //assert(!t);
+    TextWidget t = cast(TextWidget) w;
+    assert(!t);
     Object o = cast(Object) w;
     assert(!o);
-    //o = cast(Object) w;
-    //assert(!o);
 
     auto a = new B();
     assert(a);
@@ -980,20 +979,10 @@ class ProtoObject { }
     assert(!cast(Object)w);
 }
 
-interface Ordered(T)
-if (is(T == ProtoObject))
+interface Ordered
 {
     const @nogc nothrow pure @safe scope
-    int cmp(scope const Ordered!ProtoObject rhs);
-}
-
-interface Ordered(T) : Ordered!ProtoObject
-if (!is(T == ProtoObject))
-{
-    static assert(is(T : ProtoObject));
-
-    const @nogc nothrow pure @safe scope
-    int cmp(scope const T rhs);
+    int cmp(scope const ProtoObject rhs);
 }
 
 // From std.traits
@@ -1017,35 +1006,11 @@ if (X.length == 1)
 }
 
 mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
+if (is(T : ProtoObject))
 {
-    // Introduce base class overload set
-    static if (is(T P == super) && !is(P[0] == ProtoObject))
-    {
-        //TODO: would be nice to be able to
-        //alias cmp = P[0].cmp;
-
-        override
-        const @nogc nothrow pure @safe scope
-        int cmp(scope const P[0] rhs)
-        {
-            return super.cmp(rhs);
-        }
-    }
-
     override
     const @nogc nothrow pure @safe scope
-    int cmp(scope const Ordered!ProtoObject rhs)
-    {
-        auto o = (() @trusted => cast(T) rhs)();
-        int r = cmp(o);
-        if (r == 0)
-            return rhs.cmp(this);
-        return r;
-    }
-
-    override
-    const @nogc nothrow pure @safe scope
-    int cmp(scope const T rhs)
+    int cmp(scope const ProtoObject po)
     {
         int compare(U1, U2)(U1 u1, U2 u2)
         {
@@ -1079,6 +1044,9 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
             return 0;
         }
 
+        auto o = (() @trusted => cast(Ordered) po)();
+        if (o is null) return 1;
+        auto rhs = (() @trusted => cast(T) o)();
         if (rhs is null) return 1;
 
         static if (M.length == 0)
@@ -1133,7 +1101,7 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered!Widget
+    class Widget : ProtoObject, Ordered
     {
         mixin ImplOrdered!Widget;
         int x;
@@ -1146,19 +1114,21 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
         }
     }
 
-    class TextWidget : Widget, Ordered!TextWidget
+    class TextWidget : Widget, Ordered
     {
         mixin ImplOrdered!TextWidget;
         this(int x, int y) { super(x, y); }
     }
 
-    class TextWidgetEnh : TextWidget, Ordered!TextWidgetEnh
+    class TextWidgetEnh : TextWidget, Ordered
     {
         mixin ImplOrdered!TextWidgetEnh;
         this(int x, int y) { super(x, y); }
     }
 
     auto w1 = new Widget(10, 20);
+    ProtoObject po = w1;
+    Ordered opo = w1;
     auto w2 = new TextWidget(10, 21);
     assert(w1.cmp(w2) != w2.cmp(w1));
     Widget w3;
@@ -1168,7 +1138,7 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered!Widget
+    class Widget : ProtoObject, Ordered
     {
         mixin ImplOrdered!(Widget, false, "x");
         int x;
@@ -1181,7 +1151,7 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
         }
     }
 
-    class TextWidget : Widget, Ordered!TextWidget
+    class TextWidget : Widget, Ordered
     {
         mixin ImplOrdered!(TextWidget, false, "x");
         this(int x, int y) { super(x, y); }
@@ -1190,12 +1160,12 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
     auto w1 = new Widget(10, 20);
     auto w2 = new TextWidget(10, 21);
     assert(w1.cmp(w2) == 0);
-    assert(w1.cmp(w2) == w2.cmp(w1));
+    assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
 }
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered!Widget
+    class Widget : ProtoObject, Ordered
     {
         mixin ImplOrdered!(Widget, true, "x", (int a, int b) => a - b);
         int x;
@@ -1208,7 +1178,7 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
         }
     }
 
-    class TextWidget : Widget, Ordered!TextWidget
+    class TextWidget : Widget, Ordered
     {
         mixin ImplOrdered!(TextWidget, true, "x", (int a, int b) => a - b);
         this(int x, int y) { super(x, y); }
@@ -1217,7 +1187,7 @@ mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
     auto w1 = new Widget(10, 20);
     auto w2 = new TextWidget(10, 21);
     assert(w1.cmp(w2) == 0);
-    assert(w1.cmp(w2) == w2.cmp(w1));
+    assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
 }
 
 /**
