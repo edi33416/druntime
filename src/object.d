@@ -113,7 +113,7 @@ int __cmp(T)(scope const T[] lhs, scope const T[] rhs) @trusted
 
 // Compare class and interface objects for ordering.
 private int __cmp(Obj)(Obj lhs, Obj rhs)
-if (is(Obj : Object))
+if (is(Obj : ProtoObject))
 {
     if (lhs is rhs)
         return 0;
@@ -122,7 +122,15 @@ if (is(Obj : Object))
         return -1;
     if (!rhs)
         return 1;
-    return lhs.opCmp(rhs);
+    static if (is(Obj : Object))
+    {
+        return lhs.opCmp(rhs);
+    }
+    else
+    {
+        auto o = (() @trusted => cast(Ordered) lhs)();
+        return o is null ? -1 : o.cmp(rhs);
+    }
 }
 
 // This function is called by the compiler when dealing with array
@@ -1012,7 +1020,7 @@ if (is(T : ProtoObject))
     const @nogc nothrow pure @safe scope
     int cmp(scope const ProtoObject po)
     {
-        int compare(U1, U2)(U1 u1, U2 u2)
+        int compare(U1, U2)(const U1 u1, const U2 u2)
         {
             static if (__traits(compiles, __cmp(u1, u2)))
             {
@@ -1077,6 +1085,7 @@ if (is(T : ProtoObject))
             static if (__traits(compiles, __traits(getMember, this, U[memberIdx])) && // avoid no property `this` for type proto_obj_t.__unittest_L134_C1.Widget
                    !isFunction!(__traits(getMember, this, U[memberIdx])) &&
                    is(typeof(__traits(getMember, this, U[memberIdx]))))
+            //static if (is(typeof(__traits(getMember, this, U[memberIdx]))))
             {
                 alias thisMember = __traits(getMember, this, U[memberIdx]);
                 alias rhsMember = __traits(getMember, rhs, U[memberIdx]);
@@ -1245,6 +1254,46 @@ break_label:
 
     assert(b1.cmp(b2) == 0);
     assert(b1.format != b2.format);
+
+    // Compare through __cmp(ProtoObject, ProtoObject)
+    assert(__cmp(b1, b2) == 0);
+    auto po = new ProtoObject();
+    assert(__cmp(b1, po) == 1);
+    assert(__cmp(po, b1) == -1);
+}
+
+version(none)
+@safe unittest
+{
+    class Widget : ProtoObject, Ordered
+    {
+        mixin ImplOrdered!Widget;
+        int x;
+        int y;
+
+        this(int x, int y)
+        {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    class Composer : ProtoObject, Ordered
+    {
+        mixin ImplOrdered!Composer;
+        Widget w;
+
+        this(Widget w) { this.w = w; }
+    }
+
+    auto c1 = new Composer(new Widget(10, 20));
+    auto c2 = new Composer(new Widget(10, 20));
+    auto w1 = new Widget(10, 20);
+    auto w2 = new Widget(10, 20);
+    assert(__cmp(w1, w2) == 0);
+    int foo(const Widget w1, const Widget w2) { return __cmp(w1, w2); }
+    assert(foo(w1, w2) == 0);
+    //assert(c1.cmp(c2) == 0);
 }
 
 /**
