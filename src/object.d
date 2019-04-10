@@ -1013,9 +1013,10 @@ if (X.length == 1)
         enum isFunction = false;
 }
 
-mixin template ImplementOrdered(T, bool hasCustomCompare = false, M...)
-if (is(T : ProtoObject))
+mixin template ImplementOrdered(M...)
 {
+    static assert(is(typeof(this) : ProtoObject));
+
     override
     const @nogc nothrow pure @safe scope
     int cmp(scope const ProtoObject po)
@@ -1058,58 +1059,54 @@ if (is(T : ProtoObject))
             return 0;
         }
 
-        auto o = (() @trusted => cast(Ordered) po)();
-        if (o is null) return 1;
-        auto rhs = (() @trusted => cast(T) o)();
+        alias T = typeof(this);
+        auto rhs = (() @trusted => cast(T) po)();
         if (rhs is null) return 1;
 
         static if (M.length == 0)
         {
-            alias U = __traits(allMembers, T);
+            alias U = GetAllFields!T;
         }
         else
         {
             alias U = M;
         }
-        static assert(!hasCustomCompare || (hasCustomCompare && (U.length % 2 == 0)));
-        enum len = hasCustomCompare ? (U.length / 2) : U.length;
+        enum len = U.length;
 
         int r = 0;
         static foreach (i; 0 .. len)
         {{
-            static if (hasCustomCompare)
-            {
-                enum memberIdx = 2 * i;
-                alias compareFun = U[2 * i + 1];
-            }
-            else
-            {
-                enum memberIdx = i;
-                alias compareFun = compare;
-            }
 
-            static if (__traits(compiles, __traits(getMember, this, U[memberIdx])) && // avoid no property `this` for type proto_obj_t.__unittest_L134_C1.Widget
-                   !isFunction!(__traits(getMember, this, U[memberIdx])) &&
-                   is(typeof(__traits(getMember, this, U[memberIdx]))))
-            //static if (is(typeof(__traits(getMember, this, U[memberIdx]))))
+            static if (is(typeof(U[i]) == string))
             {
-                alias thisMember = __traits(getMember, this, U[memberIdx]);
-                alias rhsMember = __traits(getMember, rhs, U[memberIdx]);
+                enum fieldName = U[i];
+                // If assert fails, propagate compiler error
+                static assert(is(typeof(__traits(getMember, this, fieldName))),
+                              typeof(__traits(getMember, this, fieldName)));
+
+                static if (((i + 1) < len) && !is(typeof(U[i + 1]) == string))
+                {
+                    // If the next element is not a string, then it must be the comparator
+                    alias compareFun = U[i + 1];
+                }
+                else
+                {
+                    alias compareFun = compare;
+                }
+
+                alias thisMember = __traits(getMember, this, fieldName);
+                alias rhsMember = __traits(getMember, rhs, fieldName);
 
                 // If we can't call the function with the args, throw the compiler error
                 static assert(is(typeof({compareFun(thisMember, rhsMember);})),
                         typeof({compareFun(thisMember, rhsMember);}));
 
-                r = compareFun(__traits(getMember, this, U[memberIdx]), __traits(getMember, rhs, U[memberIdx]));
+                r = compareFun(__traits(getMember, this, fieldName), __traits(getMember, rhs, fieldName));
                 if (r != 0)
                 {
                     return r;
                 }
             }
-            //else
-            //{
-                //static assert(isFunction!(__traits(getMember, this, U[memberIdx])), "No member " ~ (U[memberIdx]).stringof ~ " for type " ~ typeof(this).stringof);
-            //}
         }}
         return r;
     }
@@ -1119,7 +1116,7 @@ if (is(T : ProtoObject))
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplementOrdered!Widget;
+        mixin ImplementOrdered;
         int x;
         int y;
 
@@ -1132,13 +1129,13 @@ if (is(T : ProtoObject))
 
     class TextWidget : Widget, Ordered
     {
-        mixin ImplementOrdered!TextWidget;
+        mixin ImplementOrdered;
         this(int x, int y) { super(x, y); }
     }
 
     class TextWidgetEnh : TextWidget, Ordered
     {
-        mixin ImplementOrdered!TextWidgetEnh;
+        mixin ImplementOrdered;
         this(int x, int y) { super(x, y); }
     }
 
@@ -1156,7 +1153,7 @@ if (is(T : ProtoObject))
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplementOrdered!(Widget, false, "x");
+        mixin ImplementOrdered!("x");
         int x;
         int y;
 
@@ -1169,7 +1166,7 @@ if (is(T : ProtoObject))
 
     class TextWidget : Widget, Ordered
     {
-        mixin ImplementOrdered!(TextWidget, false, "x");
+        mixin ImplementOrdered!("x");
         this(int x, int y) { super(x, y); }
     }
 
@@ -1183,7 +1180,7 @@ if (is(T : ProtoObject))
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplementOrdered!(Widget, true, "x", (int a, int b) => a - b);
+        mixin ImplementOrdered!("x", (int a, int b) => a - b);
         int x;
         int y;
 
@@ -1196,7 +1193,7 @@ if (is(T : ProtoObject))
 
     class TextWidget : Widget, Ordered
     {
-        mixin ImplementOrdered!(TextWidget, true, "x", (int a, int b) => a - b);
+        mixin ImplementOrdered!("x", (int a, int b) => a - b);
         this(int x, int y) { super(x, y); }
     }
 
@@ -1206,29 +1203,49 @@ if (is(T : ProtoObject))
     assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
 }
 
-mixin template ImplementOrderedExcept(T, M...)
-if (is(T : ProtoObject))
+template GetAllFields(T)
 {
-    template FilteredRes(T, M...)
+    import core.internal.traits : Filter;
+    static bool FilterPred(string member)()
     {
-        import core.internal.traits;
-        static bool ExceptPred(string except)()
+        T t;
+        static if (__traits(compiles, __traits(getMember, t, member)))
         {
-            bool r = true;
-            static foreach (mem; M)
-            {
-                static if (mem == except)
-                {
-                    r = false;
-                    goto break_label;
-                }
-            }
-break_label:
-            return r;
+            return !isFunction!(__traits(getMember, t, member)) &&
+                   is(typeof(__traits(getMember, t, member)));
         }
-        enum FilteredRes = Filter!(ExceptPred, __traits(allMembers, T));
+        else
+        {
+            return false;
+        }
     }
-    mixin ImplementOrdered!(T, false, FilteredRes!(T, M));
+    enum GetAllFields = Filter!(FilterPred, __traits(allMembers, T));
+}
+
+template GetAllFieldsExcept(T, M...)
+{
+    import core.internal.traits : Filter;
+    static bool ExceptPred(string except)()
+    {
+        bool r = true;
+        static foreach (mem; M)
+        {
+            static if (mem == except)
+            {
+                r = false;
+                goto break_label;
+            }
+        }
+break_label:
+        return r;
+    }
+    enum GetAllFieldsExcept = Filter!(ExceptPred, GetAllFields!T);
+}
+
+mixin template ImplementOrderedExcept(M...)
+{
+    static assert (is(typeof(this) : ProtoObject));
+    mixin ImplementOrdered!(GetAllFieldsExcept!(typeof(this), M));
 }
 
 @safe unittest
@@ -1252,7 +1269,7 @@ break_label:
             this.format = format;
         }
 
-        mixin ImplementOrderedExcept!(Book, "format");
+        mixin ImplementOrderedExcept!("format");
     }
 
     auto b1 = new Book(12345, Book.BookFormat.pdf);
@@ -1273,7 +1290,7 @@ break_label:
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplementOrdered!Widget;
+        mixin ImplementOrdered;
         int x;
         int y;
 
@@ -1286,7 +1303,7 @@ break_label:
 
     class Composer : ProtoObject, Ordered
     {
-        mixin ImplementOrdered!Composer;
+        mixin ImplementOrdered;
         Widget w;
 
         this(Widget w) { this.w = w; }
