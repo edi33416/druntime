@@ -1015,7 +1015,7 @@ if (X.length == 1)
 
 mixin template ImplementOrdered(M...)
 {
-    static assert(is(typeof(this) : ProtoObject));
+    static assert(is(typeof(this) : ProtoObject) && is(typeof(this) : Ordered));
 
     override
     const @nogc nothrow pure @safe scope
@@ -1114,9 +1114,10 @@ mixin template ImplementOrdered(M...)
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered
+    class Widget : ProtoObject, Ordered, Equals
     {
         mixin ImplementOrdered;
+        mixin ImplementEquals;
         int x;
         int y;
 
@@ -1127,15 +1128,17 @@ mixin template ImplementOrdered(M...)
         }
     }
 
-    class TextWidget : Widget, Ordered
+    class TextWidget : Widget, Ordered, Equals
     {
         mixin ImplementOrdered;
+        mixin ImplementEquals;
         this(int x, int y) { super(x, y); }
     }
 
-    class TextWidgetEnh : TextWidget, Ordered
+    class TextWidgetEnh : TextWidget, Ordered, Equals
     {
         mixin ImplementOrdered;
+        mixin ImplementEquals;
         this(int x, int y) { super(x, y); }
     }
 
@@ -1147,13 +1150,16 @@ mixin template ImplementOrdered(M...)
     Widget w3;
     assert(w1.cmp(w3) != 0);
     assert(w3 is null);
+    assert(!w1.equals(w2));
+    assert(!w2.equals(w1));
 }
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered
+    class Widget : ProtoObject, Ordered, Equals
     {
         mixin ImplementOrdered!("x");
+        mixin ImplementEquals!("x");
         int x;
         int y;
 
@@ -1164,9 +1170,10 @@ mixin template ImplementOrdered(M...)
         }
     }
 
-    class TextWidget : Widget, Ordered
+    class TextWidget : Widget, Ordered, Equals
     {
         mixin ImplementOrdered!("x");
+        mixin ImplementEquals!("x");
         this(int x, int y) { super(x, y); }
     }
 
@@ -1174,6 +1181,8 @@ mixin template ImplementOrdered(M...)
     auto w2 = new TextWidget(10, 21);
     assert(w1.cmp(w2) == 0);
     assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
+    assert(w1.equals(w2));
+    assert(!w2.equals(w1)); // TextWidget is not impl conv to Widget
 }
 
 @safe unittest
@@ -1248,9 +1257,15 @@ mixin template ImplementOrderedExcept(M...)
     mixin ImplementOrdered!(GetAllFieldsExcept!(typeof(this), M));
 }
 
+mixin template ImplementEqualsExcept(M...)
+{
+    static assert (is(typeof(this) : ProtoObject));
+    mixin ImplementEquals!(GetAllFieldsExcept!(typeof(this), M));
+}
+
 @safe unittest
 {
-    class Book : ProtoObject, Ordered
+    class Book : ProtoObject, Ordered, Equals
     {
         enum BookFormat
         {
@@ -1270,6 +1285,7 @@ mixin template ImplementOrderedExcept(M...)
         }
 
         mixin ImplementOrderedExcept!("format");
+        mixin ImplementEqualsExcept!("format");
     }
 
     auto b1 = new Book(12345, Book.BookFormat.pdf);
@@ -1278,6 +1294,7 @@ mixin template ImplementOrderedExcept(M...)
     assert(b1.cmp(b2) == 0);
     assert(b1.format != b2.format);
     assert((b1 < b2) == 0);
+    assert(b1.equals(b2));
 
     // Compare through __cmp(ProtoObject, ProtoObject)
     assert(__cmp(b1, b2) == 0);
@@ -1313,6 +1330,104 @@ mixin template ImplementOrderedExcept(M...)
     auto c2 = new Composer(new Widget(10, 20));
     assert(__cmp(c1, c2) == 0);
     assert((c1 < c2) == 0);
+}
+
+interface Equals
+{
+    const @nogc nothrow pure @safe scope
+    int equals(scope const ProtoObject rhs);
+}
+
+mixin template ImplementEquals(M...)
+{
+    static assert(is(typeof(this) : ProtoObject) && is(typeof(this) : Equals));
+
+    override
+    const @nogc nothrow pure @safe scope
+    int equals(scope const ProtoObject po)
+    {
+        int compareEqual(U1, U2)(const U1 u1, const U2 u2)
+        {
+            static if (__traits(compiles, __equals(u1, u2)))
+            {
+                auto r = __equals(u1, u2);
+            }
+            else static if (__traits(compiles, u1.equals(u2)))
+            {
+                auto r = u1.equals(u2);
+            }
+            else static if (__traits(compiles, u1.opEquals(u2)))
+            {
+                auto r = u1.opEquals(u2);
+            }
+            else static if (__traits(compiles, u1 == u2))
+            {
+                auto r = u1 == u2;
+            }
+            else
+            {
+                // TODO: fix this legacy bad behavior, see
+                // https://issues.dlang.org/show_bug.cgi?id=17244
+                static assert(is(U1 == U2), "Internal error.");
+                import core.stdc.string : memcmp;
+                auto r = (() @trusted => memcmp(&u1, &u2, U1.sizeof))();
+            }
+            return r;
+        }
+
+        alias T = typeof(this);
+
+        if (this is po) return 1;
+        auto rhs = (() @trusted => cast(T) po)();
+        if (rhs is null) return 0;
+
+        static if (M.length == 0)
+        {
+            alias U = GetAllFields!T;
+        }
+        else
+        {
+            alias U = M;
+        }
+        enum len = U.length;
+
+        int r = 0;
+        static foreach (i; 0 .. len)
+        {{
+
+            static if (is(typeof(U[i]) == string))
+            {
+                enum fieldName = U[i];
+                // If assert fails, propagate compiler error
+                static assert(is(typeof(__traits(getMember, this, fieldName))),
+                              typeof(__traits(getMember, this, fieldName)));
+
+                static if (((i + 1) < len) && !is(typeof(U[i + 1]) == string))
+                {
+                    // If the next element is not a string, then it must be the comparator
+                    alias compareFun = U[i + 1];
+                }
+                else
+                {
+                    alias compareFun = compareEqual;
+                }
+
+                alias thisMember = __traits(getMember, this, fieldName);
+                alias rhsMember = __traits(getMember, rhs, fieldName);
+
+                // If we can't call the function with the args, throw the compiler error
+                static assert(is(typeof({compareFun(thisMember, rhsMember);})),
+                        typeof({compareFun(thisMember, rhsMember);}));
+
+                r = compareFun(__traits(getMember, this, fieldName), __traits(getMember, rhs, fieldName));
+                if (!r)
+                {
+                    return r;
+                }
+            }
+        }}
+        return r;
+    }
 }
 
 /**
