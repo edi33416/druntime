@@ -112,7 +112,7 @@ int __cmp(T)(scope const T[] lhs, scope const T[] rhs) @trusted
 }
 
 // Compare class and interface objects for ordering.
-private int __cmp(Obj)(Obj lhs, Obj rhs)
+int __cmp(Obj)(Obj lhs, Obj rhs)
 if (is(Obj : ProtoObject))
 {
     if (lhs is rhs)
@@ -1013,7 +1013,7 @@ if (X.length == 1)
         enum isFunction = false;
 }
 
-mixin template ImplOrdered(T, bool hasCustomCompare = false, M...)
+mixin template ImplementOrdered(T, bool hasCustomCompare = false, M...)
 if (is(T : ProtoObject))
 {
     override
@@ -1025,6 +1025,12 @@ if (is(T : ProtoObject))
             static if (__traits(compiles, __cmp(u1, u2)))
             {
                 auto r = __cmp(u1, u2);
+                if (r != 0)
+                    return r;
+            }
+            else static if (__traits(compiles, u1.cmp(u2)))
+            {
+                auto r = u1.cmp(u2);
                 if (r != 0)
                     return r;
             }
@@ -1113,7 +1119,7 @@ if (is(T : ProtoObject))
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplOrdered!Widget;
+        mixin ImplementOrdered!Widget;
         int x;
         int y;
 
@@ -1126,13 +1132,13 @@ if (is(T : ProtoObject))
 
     class TextWidget : Widget, Ordered
     {
-        mixin ImplOrdered!TextWidget;
+        mixin ImplementOrdered!TextWidget;
         this(int x, int y) { super(x, y); }
     }
 
     class TextWidgetEnh : TextWidget, Ordered
     {
-        mixin ImplOrdered!TextWidgetEnh;
+        mixin ImplementOrdered!TextWidgetEnh;
         this(int x, int y) { super(x, y); }
     }
 
@@ -1150,7 +1156,7 @@ if (is(T : ProtoObject))
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplOrdered!(Widget, false, "x");
+        mixin ImplementOrdered!(Widget, false, "x");
         int x;
         int y;
 
@@ -1163,7 +1169,7 @@ if (is(T : ProtoObject))
 
     class TextWidget : Widget, Ordered
     {
-        mixin ImplOrdered!(TextWidget, false, "x");
+        mixin ImplementOrdered!(TextWidget, false, "x");
         this(int x, int y) { super(x, y); }
     }
 
@@ -1177,7 +1183,7 @@ if (is(T : ProtoObject))
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplOrdered!(Widget, true, "x", (int a, int b) => a - b);
+        mixin ImplementOrdered!(Widget, true, "x", (int a, int b) => a - b);
         int x;
         int y;
 
@@ -1190,7 +1196,7 @@ if (is(T : ProtoObject))
 
     class TextWidget : Widget, Ordered
     {
-        mixin ImplOrdered!(TextWidget, true, "x", (int a, int b) => a - b);
+        mixin ImplementOrdered!(TextWidget, true, "x", (int a, int b) => a - b);
         this(int x, int y) { super(x, y); }
     }
 
@@ -1200,7 +1206,7 @@ if (is(T : ProtoObject))
     assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
 }
 
-mixin template ImplOrderedExcept(T, M...)
+mixin template ImplementOrderedExcept(T, M...)
 if (is(T : ProtoObject))
 {
     template FilteredRes(T, M...)
@@ -1222,7 +1228,7 @@ break_label:
         }
         enum FilteredRes = Filter!(ExceptPred, __traits(allMembers, T));
     }
-    mixin ImplOrdered!(T, false, FilteredRes!(T, M));
+    mixin ImplementOrdered!(T, false, FilteredRes!(T, M));
 }
 
 @safe unittest
@@ -1246,7 +1252,7 @@ break_label:
             this.format = format;
         }
 
-        mixin ImplOrderedExcept!(Book, "format");
+        mixin ImplementOrderedExcept!(Book, "format");
     }
 
     auto b1 = new Book(12345, Book.BookFormat.pdf);
@@ -1254,6 +1260,7 @@ break_label:
 
     assert(b1.cmp(b2) == 0);
     assert(b1.format != b2.format);
+    assert((b1 < b2) == 0);
 
     // Compare through __cmp(ProtoObject, ProtoObject)
     assert(__cmp(b1, b2) == 0);
@@ -1262,12 +1269,11 @@ break_label:
     assert(__cmp(po, b1) == -1);
 }
 
-version(none)
 @safe unittest
 {
     class Widget : ProtoObject, Ordered
     {
-        mixin ImplOrdered!Widget;
+        mixin ImplementOrdered!Widget;
         int x;
         int y;
 
@@ -1280,7 +1286,7 @@ version(none)
 
     class Composer : ProtoObject, Ordered
     {
-        mixin ImplOrdered!Composer;
+        mixin ImplementOrdered!Composer;
         Widget w;
 
         this(Widget w) { this.w = w; }
@@ -1288,12 +1294,8 @@ version(none)
 
     auto c1 = new Composer(new Widget(10, 20));
     auto c2 = new Composer(new Widget(10, 20));
-    auto w1 = new Widget(10, 20);
-    auto w2 = new Widget(10, 20);
-    assert(__cmp(w1, w2) == 0);
-    int foo(const Widget w1, const Widget w2) { return __cmp(w1, w2); }
-    assert(foo(w1, w2) == 0);
-    //assert(c1.cmp(c2) == 0);
+    assert(__cmp(c1, c2) == 0);
+    assert((c1 < c2) == 0);
 }
 
 /**
