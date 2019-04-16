@@ -1213,6 +1213,29 @@ mixin template ImplementOrdered(M...)
     assert(w1.hash() == w2.hash());
 }
 
+@safe unittest
+{
+    // Use properties instead of fields
+    class Test : ProtoObject, Ordered, Equals, Hash
+    {
+        mixin ImplementOrdered!"length";
+        mixin ImplementEquals!"length";
+        mixin ImplementHash!"length";
+
+        int x;
+        const pure nothrow @safe @nogc scope
+        int length() { return 42; }
+
+        this(int x) { this.x = x; }
+    }
+
+    auto t1 = new Test(1);
+    auto t2 = new Test(2);
+    assert((t1 < t2) == 0);
+    assert(t1 == t2);
+    assert(t1.hash() == t2.hash());
+}
+
 template GetAllFields(T)
 {
     import core.internal.traits : Filter;
