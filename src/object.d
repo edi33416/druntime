@@ -115,7 +115,6 @@ int __cmp(T)(scope const T[] lhs, scope const T[] rhs) @trusted
 int __cmp(C1, C2)(C1 lhs, C2 rhs)
 if (is(C1 == class) && is(C2 == class))
 {
-    pragma(msg, "JAAA " ~ C1.stringof ~ " " ~ C2.stringof);
     if (lhs is rhs)
         return 0;
     // Regard null references as always being "less than"
@@ -314,12 +313,6 @@ if (!__traits(isScalar, T1) && !__traits(isScalar, T2))
 
     assert(__cmp([c1, c1][], [c2, c2][]) < 0);
     assert(__cmp([c2, c2], [c1, c1]) > 0);
-
-    C nullRef;
-    assert(!(c1 < nullRef) && (nullRef < c1));
-    assert((c1 < c1) == 0);
-    assert(c1 < c2);
-    assert(!(c2 < c1));
 }
 
 // structs
