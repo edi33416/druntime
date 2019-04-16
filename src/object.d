@@ -1114,10 +1114,11 @@ mixin template ImplementOrdered(M...)
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered, Equals
+    class Widget : ProtoObject, Ordered, Equals, Hash
     {
         mixin ImplementOrdered;
         mixin ImplementEquals;
+        mixin ImplementHash;
         int x;
         int y;
 
@@ -1129,13 +1130,6 @@ mixin template ImplementOrdered(M...)
     }
 
     class TextWidget : Widget, Ordered, Equals
-    {
-        mixin ImplementOrdered;
-        mixin ImplementEquals;
-        this(int x, int y) { super(x, y); }
-    }
-
-    class TextWidgetEnh : TextWidget, Ordered, Equals
     {
         mixin ImplementOrdered;
         mixin ImplementEquals;
@@ -1143,23 +1137,29 @@ mixin template ImplementOrdered(M...)
     }
 
     auto w1 = new Widget(10, 20);
-    ProtoObject po = w1;
-    Ordered opo = w1;
-    auto w2 = new TextWidget(10, 21);
-    assert(w1.cmp(w2) != w2.cmp(w1));
-    Widget w3;
-    assert(w1.cmp(w3) != 0);
-    assert(w3 is null);
-    assert(!w1.equals(w2));
-    assert(!w2.equals(w1));
+    auto w2 = new Widget(10, 20);
+    assert(w1.cmp(w2) == 0);
+
+    auto w3 = new TextWidget(10, 21);
+    assert(w1.cmp(w3) != w3.cmp(w1));
+
+    Widget w4;
+    assert(w4 is null);
+    assert(w1.cmp(w4) != 0);
+
+    assert(w1.equals(w2));
+    assert(w1.hash() == w2.hash());
+    assert(!w1.equals(w3) && !w3.equals(w1));
+    assert(w1.hash() != w3.hash());
 }
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered, Equals
+    class Widget : ProtoObject, Ordered, Equals, Hash
     {
         mixin ImplementOrdered!("x");
         mixin ImplementEquals!("x");
+        mixin ImplementHash!("x");
         int x;
         int y;
 
@@ -1170,10 +1170,11 @@ mixin template ImplementOrdered(M...)
         }
     }
 
-    class TextWidget : Widget, Ordered, Equals
+    class TextWidget : Widget, Ordered, Equals, Hash
     {
         mixin ImplementOrdered!("x");
         mixin ImplementEquals!("x");
+        mixin ImplementHash!("x");
         this(int x, int y) { super(x, y); }
     }
 
@@ -1183,33 +1184,33 @@ mixin template ImplementOrdered(M...)
     assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
     assert(w1.equals(w2));
     assert(!w2.equals(w1)); // TextWidget is not impl conv to Widget
+    assert(w1.hash() == w2.hash());
 }
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered
+    class Widget : ProtoObject, Ordered, Equals, Hash
     {
-        mixin ImplementOrdered!("x", (int a, int b) => a - b);
+        mixin ImplementOrdered!("x", "y", (int a, int b) => a - b + 1);
+        mixin ImplementEquals!("x", "y", (int a, int b) => (a - b + 1) == 0);
+        mixin ImplementHash!("x", (int a, size_t seed) => hashOf(a, seed));
         int x;
         int y;
+        int z;
 
-        this(int x, int y)
+        this(int x, int y, int z)
         {
             this.x = x;
             this.y = y;
+            this.z = z;
         }
     }
 
-    class TextWidget : Widget, Ordered
-    {
-        mixin ImplementOrdered!("x", (int a, int b) => a - b);
-        this(int x, int y) { super(x, y); }
-    }
-
-    auto w1 = new Widget(10, 20);
-    auto w2 = new TextWidget(10, 21);
+    auto w1 = new Widget(10, 20, 30);
+    auto w2 = new Widget(10, 21, 31);
     assert(w1.cmp(w2) == 0);
-    assert(w1.cmp(w2) != w2.cmp(w1)); // TextWidget is not impl conv to Widget
+    assert(w1.equals(w2));
+    assert(w1.hash() == w2.hash());
 }
 
 template GetAllFields(T)
@@ -1263,9 +1264,15 @@ mixin template ImplementEqualsExcept(M...)
     mixin ImplementEquals!(GetAllFieldsExcept!(typeof(this), M));
 }
 
+mixin template ImplementHashExcept(M...)
+{
+    static assert (is(typeof(this) : ProtoObject));
+    mixin ImplementHash!(GetAllFieldsExcept!(typeof(this), M));
+}
+
 @safe unittest
 {
-    class Book : ProtoObject, Ordered, Equals
+    class Book : ProtoObject, Ordered, Equals, Hash
     {
         enum BookFormat
         {
@@ -1286,6 +1293,7 @@ mixin template ImplementEqualsExcept(M...)
 
         mixin ImplementOrderedExcept!("format");
         mixin ImplementEqualsExcept!("format");
+        mixin ImplementHashExcept!("format");
     }
 
     auto b1 = new Book(12345, Book.BookFormat.pdf);
@@ -1300,6 +1308,8 @@ mixin template ImplementEqualsExcept(M...)
     // Check lowering to equals
     assert(b1 == b2);
 
+    assert(b1.hash() == b2.hash());
+
     // Compare through __cmp(ProtoObject, ProtoObject)
     assert(__cmp(b1, b2) == 0);
     auto po = new ProtoObject();
@@ -1309,9 +1319,10 @@ mixin template ImplementEqualsExcept(M...)
 
 @safe unittest
 {
-    class Widget : ProtoObject, Ordered
+    class Widget : ProtoObject, Ordered, Equals
     {
         mixin ImplementOrdered;
+        mixin ImplementEquals;
         int x;
         int y;
 
@@ -1322,9 +1333,10 @@ mixin template ImplementEqualsExcept(M...)
         }
     }
 
-    class Composer : ProtoObject, Ordered
+    class Composer : ProtoObject, Ordered, Equals
     {
         mixin ImplementOrdered;
+        mixin ImplementEquals;
         Widget w;
 
         this(Widget w) { this.w = w; }
@@ -1332,8 +1344,8 @@ mixin template ImplementEqualsExcept(M...)
 
     auto c1 = new Composer(new Widget(10, 20));
     auto c2 = new Composer(new Widget(10, 20));
-    assert(__cmp(c1, c2) == 0);
     assert((c1 < c2) == 0);
+    assert(c1 == c2);
 }
 
 interface Equals
@@ -1428,6 +1440,68 @@ mixin template ImplementEquals(M...)
                 {
                     return r;
                 }
+            }
+        }}
+        return r;
+    }
+}
+
+interface Hash
+{
+    const @nogc nothrow pure @safe scope
+    size_t hash();
+}
+
+mixin template ImplementHash(M...)
+{
+    static assert(is(typeof(this) : ProtoObject) && is(typeof(this) : Hash));
+
+    override
+    const @nogc nothrow pure @safe scope
+    size_t hash()
+    {
+        alias T = typeof(this);
+
+        static if (M.length == 0)
+        {
+            alias U = GetAllFields!T;
+        }
+        else
+        {
+            alias U = M;
+        }
+        enum len = U.length;
+
+        size_t r = 0;
+        static foreach (i; 0 .. len)
+        {{
+
+            static if (is(typeof(U[i]) == string))
+            {
+                enum fieldName = U[i];
+                // If assert fails, propagate compiler error
+                static assert(is(typeof(__traits(getMember, this, fieldName))),
+                              typeof(__traits(getMember, this, fieldName)));
+
+                static if (((i + 1) < len) && !is(typeof(U[i + 1]) == string))
+                {
+                    // If the next element is not a string, then it must be the comparator
+                    alias hashFun = U[i + 1];
+                }
+                else
+                {
+                    //import core.internal.hash : hashOf;
+                    //return core.internal.hash.hashOf(arg, seed);
+                    alias hashFun = hashOf;
+                }
+
+                alias thisMember = __traits(getMember, this, fieldName);
+
+                // If we can't call the function with the args, throw the compiler error
+                static assert(is(typeof({hashFun(thisMember, r);})),
+                        typeof({hashFun(thisMember, r);}));
+
+                r = hashFun(__traits(getMember, this, fieldName), r);
             }
         }}
         return r;
