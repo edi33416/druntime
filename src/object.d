@@ -1238,21 +1238,42 @@ mixin template ImplementOrdered(M...)
 
 template GetAllFields(T)
 {
-    import core.internal.traits : Filter;
-    static bool FilterPred(string member)()
+    version (all)
     {
-        T t;
-        static if (__traits(compiles, __traits(getMember, t, member)))
+        import core.internal.traits : Filter;
+        static bool FilterPred(string member)()
         {
-            return !isFunction!(__traits(getMember, t, member)) &&
-                   is(typeof(__traits(getMember, t, member)));
+            T t;
+            static if (__traits(compiles, __traits(getMember, t, member)))
+            {
+                return !isFunction!(__traits(getMember, t, member)) &&
+                    is(typeof(__traits(getMember, t, member)));
+            }
+            else
+            {
+                return false;
+            }
         }
-        else
-        {
-            return false;
-        }
+        enum GetAllFields = Filter!(FilterPred, __traits(allMembers, T));
     }
-    enum GetAllFields = Filter!(FilterPred, __traits(allMembers, T));
+    else
+    {
+        import core.internal.traits : staticMap;
+        static enum ident(alias U) = __traits(identifier, U);
+        enum GetAllFields = staticMap!(ident, T.tupleof);
+    }
+}
+
+@safe unittest
+{
+    import core.internal.traits : AliasSeq;
+
+    struct S
+    {
+        int x, y;
+        float z;
+    }
+    static assert(GetAllFields!S == AliasSeq!("x", "y", "z"));
 }
 
 template GetAllFieldsExcept(T, M...)
