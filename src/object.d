@@ -1293,8 +1293,12 @@ mixin template ImplementEqualsExcept(M...)
 
     assert(b1.cmp(b2) == 0);
     assert(b1.format != b2.format);
+    // Check lowering to cmp
     assert((b1 < b2) == 0);
+
     assert(b1.equals(b2));
+    // Check lowering to equals
+    assert(b1 == b2);
 
     // Compare through __cmp(ProtoObject, ProtoObject)
     assert(__cmp(b1, b2) == 0);
@@ -1335,7 +1339,7 @@ mixin template ImplementEqualsExcept(M...)
 interface Equals
 {
     const @nogc nothrow pure @safe scope
-    int equals(scope const ProtoObject rhs);
+    bool equals(scope const ProtoObject rhs);
 }
 
 mixin template ImplementEquals(M...)
@@ -1344,9 +1348,9 @@ mixin template ImplementEquals(M...)
 
     override
     const @nogc nothrow pure @safe scope
-    int equals(scope const ProtoObject po)
+    bool equals(scope const ProtoObject po)
     {
-        int compareEqual(U1, U2)(const U1 u1, const U2 u2)
+        bool compareEqual(U1, U2)(const U1 u1, const U2 u2)
         {
             static if (__traits(compiles, __equals(u1, u2)))
             {
@@ -1391,7 +1395,7 @@ mixin template ImplementEquals(M...)
         }
         enum len = U.length;
 
-        int r = 0;
+        bool r = true;
         static foreach (i; 0 .. len)
         {{
 
@@ -1527,6 +1531,45 @@ class Object : ProtoObject
         }
         return null;
     }
+}
+
+@safe pure nothrow @nogc
+bool opEquals(ProtoObject lhsPO, ProtoObject rhsPO)
+{
+    // If aliased to the same object or both null => equal
+    if (lhsPO is rhsPO) return true;
+
+    // If either is null => non-equal
+    if (lhsPO is null || rhsPO is null) return false;
+
+    auto lhs = (() @trusted => cast(Equals) lhsPO)();
+    auto rhs = (() @trusted => cast(Equals) rhsPO)();
+
+    // If either is null => non-equal
+    if (lhs is null || rhs is null) return false;
+
+    // If same exact type => one call to method opEquals
+    version(none)
+    {
+        if (typeid(lhsPO) is typeid(rhsPO) ||
+            !__ctfe && typeid(lhs).equals(typeid(rhsPO)))
+                /* CTFE doesn't like typeid much. 'is' works, but opEquals doesn't
+                (issue 7147). But CTFE also guarantees that equal TypeInfos are
+                always identical. So, no opEquals needed during CTFE. */
+        {
+            return lhs.equals(rhsPO);
+        }
+    }
+    else
+    {
+        if (typeid(lhsPO) is typeid(rhsPO))
+        {
+            return lhs.equals(rhsPO);
+        }
+    }
+
+    // General case => symmetric calls to method opEquals
+    return lhs.equals(rhsPO) && rhs.equals(lhsPO);
 }
 
 bool opEquals(Object lhs, Object rhs)
