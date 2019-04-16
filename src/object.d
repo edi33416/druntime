@@ -111,10 +111,11 @@ int __cmp(T)(scope const T[] lhs, scope const T[] rhs) @trusted
     }
 }
 
-// Compare class and interface objects for ordering.
-private int __cmp(Obj)(Obj lhs, Obj rhs)
-if (is(Obj : Object))
+// Compare class objects for ordering.
+int __cmp(C1, C2)(C1 lhs, C2 rhs)
+if (is(C1 == class) && is(C2 == class))
 {
+    pragma(msg, "JAAA " ~ C1.stringof ~ " " ~ C2.stringof);
     if (lhs is rhs)
         return 0;
     // Regard null references as always being "less than"
@@ -305,14 +306,20 @@ if (!__traits(isScalar, T1) && !__traits(isScalar, T2))
 
     auto c1 = new C(1);
     auto c2 = new C(2);
-    assert(__cmp(c1, null) > 0);
-    assert(__cmp(null, c1) < 0);
+    assert(__cmp(c1, cast(C) null) > 0);
+    assert(__cmp(cast(C) null, c1) < 0);
     assert(__cmp(c1, c1) == 0);
     assert(__cmp(c1, c2) < 0);
     assert(__cmp(c2, c1) > 0);
 
     assert(__cmp([c1, c1][], [c2, c2][]) < 0);
     assert(__cmp([c2, c2], [c1, c1]) > 0);
+
+    C nullRef;
+    assert(!(c1 < nullRef) && (nullRef < c1));
+    assert((c1 < c1) == 0);
+    assert(c1 < c2);
+    assert(!(c2 < c1));
 }
 
 // structs
