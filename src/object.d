@@ -113,16 +113,32 @@ int __cmp(T)(scope const T[] lhs, scope const T[] rhs) @trusted
 
 // Compare class objects for ordering.
 int __cmp(C1, C2)(C1 lhs, C2 rhs)
-if (is(C1 == class) && is(C2 == class))
+if (((is(C1 == class) || is(C1 == typeof(null))) && is(C1 : Object)) &&
+    ((is(C2 == class) || is(C2 == typeof(null))) && is(C2 : Object)))
 {
-    if (lhs is rhs)
+    static if (is(C1 == typeof(null)) && is(C2 == typeof(null)))
+    {
         return 0;
-    // Regard null references as always being "less than"
-    if (!lhs)
+    }
+    else static if (is(C1 == typeof(null)))
+    {
         return -1;
-    if (!rhs)
+    }
+    else static if (is(C2 == typeof(null)))
+    {
         return 1;
-    return lhs.opCmp(rhs);
+    }
+    else
+    {
+        if (lhs is rhs)
+            return 0;
+        // Regard null references as always being "less than"
+        if (lhs is null)
+            return -1;
+        if (rhs is null)
+            return 1;
+        return lhs.opCmp(rhs);
+    }
 }
 
 // This function is called by the compiler when dealing with array
@@ -305,8 +321,8 @@ if (!__traits(isScalar, T1) && !__traits(isScalar, T2))
 
     auto c1 = new C(1);
     auto c2 = new C(2);
-    assert(__cmp(c1, cast(C) null) > 0);
-    assert(__cmp(cast(C) null, c1) < 0);
+    assert(__cmp(c1, null) > 0);
+    assert(__cmp(null, c1) < 0);
     assert(__cmp(c1, c1) == 0);
     assert(__cmp(c1, c2) < 0);
     assert(__cmp(c2, c1) > 0);
