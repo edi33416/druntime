@@ -112,8 +112,8 @@ int __cmp(T)(scope const T[] lhs, scope const T[] rhs) @trusted
 }
 
 // Compare class and interface objects for ordering.
-int __cmp(Obj)(Obj lhs, Obj rhs)
-if (is(Obj : ProtoObject))
+int __cmp(C1, C2)(C1 lhs, C2 rhs)
+if (is(C1 : ProtoObject) && is(C2 : ProtoObject))
 {
     if (lhs is rhs)
         return 0;
@@ -122,14 +122,60 @@ if (is(Obj : ProtoObject))
         return -1;
     if (!rhs)
         return 1;
-    static if (is(Obj : Object))
+    static if (is(C1 : Object))
     {
         return lhs.opCmp(rhs);
     }
     else
     {
-        auto o = (() @trusted => cast(Ordered) lhs)();
-        return o is null ? -1 : o.cmp(rhs);
+        static if (is(C1 : C2))
+        {
+            alias MostDerived = C1;
+        }
+        else
+        {
+            alias MostDerived = C2;
+        }
+
+        if (lhs.__vptr == rhs.__vptr)
+        {
+            // Same dynamic type
+            if (lhs.__vptr == typeid(MostDerived).vtbl.ptr)
+            {
+                // Both are exactly MostDerived
+                static if (is(typeof((MostDerived d) => d.cmp(d))))
+                {
+                    // MostDerived.custOpCmp(MostDerived);
+                    return (() @trusted => (cast(MostDerived)(cast(void*) lhs)).cmp(cast(MostDerived)(cast(void*) rhs)))();
+                }
+                else
+                {
+                    // MostDerived doesn't take a MostDerived. Leave it to dynamic dispatch
+                    // Maybe cast to Ordered?
+                    return lhs.cmp(rhs);
+                }
+            }
+            else
+            {
+                // Both have identical, but unknown types. Leave it to dynamic dispatch
+                //return lhs.cmp(rhs);
+                //if (lhs.__vptr == typeid(Ordered).vtbl.ptr)
+                //{
+                    //return (() @trusted => (cast(Ordered)(cast(void*) lhs)).cmp(cast(Ordered)(cast(void*) rhs)))();
+                //}
+                //else
+                //{
+                    auto o = (() @trusted => cast(Ordered) lhs)();
+                    return o is null ? -1 : o.cmp(rhs);
+                //}
+            }
+        }
+        else
+        {
+            // Different dynamic types
+            auto o = (() @trusted => cast(Ordered) lhs)();
+            return o is null ? -1 : o.cmp(rhs);
+        }
     }
 }
 
@@ -313,8 +359,8 @@ if (!__traits(isScalar, T1) && !__traits(isScalar, T2))
 
     auto c1 = new C(1);
     auto c2 = new C(2);
-    assert(__cmp(c1, null) > 0);
-    assert(__cmp(null, c1) < 0);
+    assert(__cmp(c1, cast(C) null) > 0);
+    assert(__cmp(cast(C) null, c1) < 0);
     assert(__cmp(c1, c1) == 0);
     assert(__cmp(c1, c2) < 0);
     assert(__cmp(c2, c1) > 0);
